@@ -16,7 +16,7 @@ class OpenPR:
 
 
 @dataclass
-class MergedPR:
+class MergedPR:  # pylint: disable=too-many-instance-attributes
     repo: str
     number: int
     title: str
@@ -24,6 +24,17 @@ class MergedPR:
     merged_by: str
     url: str
     merged_at: dt.datetime
+    # True when the Dependabot auto-merge workflow merged this PR. That
+    # workflow uses a PAT belonging to the repo owner, so `merged_by` alone
+    # cannot tell it apart from a merge the owner performed by hand.
+    auto_merged: bool = False
+
+    @property
+    def merged_by_label(self) -> str:
+        """`merged_by`, annotated when the merge was done by the workflow."""
+        if self.auto_merged:
+            return f"{self.merged_by} (auto-merge workflow)"
+        return self.merged_by
 
 
 @dataclass
@@ -60,6 +71,10 @@ class DigestData:  # pylint: disable=too-many-instance-attributes
     @property
     def merged_pr_count(self) -> int:
         return len(self.merged_prs)
+
+    @property
+    def auto_merged_pr_count(self) -> int:
+        return sum(1 for pr in self.merged_prs if pr.auto_merged)
 
     @property
     def alert_count(self) -> int:

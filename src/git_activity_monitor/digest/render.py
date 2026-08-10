@@ -23,6 +23,7 @@ def build_html(data: DigestData) -> str:
         repos_checked=data.repos_checked,
         merged_window_hours=data.merged_window_hours,
         merged_pr_count=data.merged_pr_count,
+        auto_merged_pr_count=data.auto_merged_pr_count,
         open_pr_count=data.open_pr_count,
         alert_count=data.alert_count,
         merged_prs=data.merged_prs_sorted(),
@@ -40,8 +41,9 @@ def build_text(data: DigestData) -> str:
         f"· {data.repos_checked} repo(s) checked",
         "",
         f"{data.open_pr_count} open PR(s) · "
-        f"{data.merged_pr_count} merged in the last {data.merged_window_hours}h "
-        f"· {data.alert_count} open alert(s)",
+        f"{data.merged_pr_count} merged in the last {data.merged_window_hours}h"
+        + (f" ({data.auto_merged_pr_count} auto-merged)" if data.auto_merged_pr_count else "")
+        + f" · {data.alert_count} open alert(s)",
         "",
     ]
 
@@ -62,7 +64,7 @@ def build_text(data: DigestData) -> str:
         for merged_pr in data.merged_prs_sorted():
             lines.append(
                 f"{merged_pr.repo} #{merged_pr.number} created by {merged_pr.author}, "
-                f"merged by {merged_pr.merged_by}: {merged_pr.title}"
+                f"merged by {merged_pr.merged_by_label}: {merged_pr.title}"
             )
             lines.append(f"  {merged_pr.url}")
         lines.append("")

@@ -22,6 +22,19 @@ def _advisory_id(raw: dict[str, Any]) -> str:
     return str(advisory.get("ghsa_id") or advisory.get("cve_id") or "")
 
 
+def _auto_merge_shas(repo: str, since: dt.datetime) -> frozenset[str]:
+    """Auto-merge-workflow head SHAs for `repo`, or empty if they can't be read.
+
+    A failure here only costs the auto-merge annotation, so it must never take
+    the whole repo's merged-PR section down with it.
+    """
+    try:
+        return frozenset(gh_cli.list_auto_merge_shas(repo, since))
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Failed to list auto-merge runs for %s; assuming manual merges", repo)
+        return frozenset()
+
+
 def collect_digest(
     owner: str,
     now: dt.datetime | None = None,
@@ -58,7 +71,10 @@ def collect_digest(
             logger.exception("Failed to list open PRs for %s; skipping", repo)
 
         try:
-            for raw in gh_cli.list_merged_prs_since(repo, since):
+            merged = gh_cli.list_merged_prs_since(repo, since)
+            # Only worth a second API call if something actually merged.
+            auto_merge_shas = _auto_merge_shas(repo, since) if merged else frozenset()
+            for raw in merged:
                 data.merged_prs.append(
                     MergedPR(
                         repo=repo,
@@ -68,6 +84,8 @@ def collect_digest(
                         merged_by=(raw.get("mergedBy") or {}).get("login", "unknown"),
                         url=raw["url"],
                         merged_at=dt.datetime.fromisoformat(raw["mergedAt"].replace("Z", "+00:00")),
+                        auto_merged=bool(raw.get("headRefOid"))
+                        and raw["headRefOid"] in auto_merge_shas,
                     )
                 )
         except Exception:  # pylint: disable=broad-exception-caught

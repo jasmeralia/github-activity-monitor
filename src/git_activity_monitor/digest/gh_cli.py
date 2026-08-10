@@ -93,10 +93,56 @@ def list_merged_prs_since(repo: str, since: dt.datetime) -> list[dict[str, Any]]
                 "--limit",
                 "200",
                 "--json",
-                "number,title,author,mergedBy,url,mergedAt",
+                "number,title,author,mergedBy,url,mergedAt,headRefOid",
             ]
         )
     )
+
+
+# The workflow every repo uses to auto-merge Dependabot PRs. It merges with a
+# PAT belonging to the repo owner (a GITHUB_TOKEN merge would not trigger the
+# release workflow), so `mergedBy` on such a PR is indistinguishable from a
+# manual merge -- hence matching on this workflow's runs instead.
+AUTO_MERGE_WORKFLOW = "dependabot-auto-merge.yml"
+
+# How far before the merge window to look for auto-merge runs. The run fires
+# when the PR is opened, which can be well before it merges (auto-merge waits
+# for CI), so the run may predate `since` by a lot.
+_RUN_LOOKBACK_DAYS = 30
+
+
+def list_auto_merge_shas(repo: str, since: dt.datetime) -> set[str]:
+    """Head SHAs the Dependabot auto-merge workflow ran successfully against.
+
+    A PR whose merge-time head SHA is in this set was merged by the workflow
+    -- either directly (`gh pr merge --auto` merges immediately when nothing
+    is pending) or via a queued auto-merge that fired once CI went green.
+
+    Returns an empty set when the repo has no such workflow.
+    """
+    created_from = (since - dt.timedelta(days=_RUN_LOOKBACK_DAYS)).astimezone(dt.UTC).date()
+    try:
+        payload = _run_json(
+            [
+                "api",
+                f"repos/{repo}/actions/workflows/{AUTO_MERGE_WORKFLOW}/runs"
+                f"?status=success&created=%3E%3D{created_from}&per_page=100",
+                "--paginate",
+                "--slurp",
+            ]
+        )
+    except subprocess.CalledProcessError as exc:
+        # No auto-merge workflow in this repo: every merge there is manual.
+        if "404" in (exc.stderr or "") or "Not Found" in (exc.stderr or ""):
+            return set()
+        raise
+    pages = payload if isinstance(payload, list) else [payload]
+    return {
+        str(run["head_sha"])
+        for page in pages
+        for run in page.get("workflow_runs", [])
+        if run.get("head_sha")
+    }
 
 
 def list_open_alerts(repo: str) -> list[dict[str, Any]]:

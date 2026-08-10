@@ -71,6 +71,7 @@
     .badge.sev-high     { background: #D32F2F !important; }
     .badge.sev-moderate { background: #F29900 !important; }
     .badge.sev-low       { background: #9AA0A6 !important; }
+    .badge.automerge     { background: #1E7E34 !important; }
 
     .disabled-note {
       font-size: 12px;
@@ -126,7 +127,7 @@
     </div>
     <div class="stat stat-merged">
       <span class="stat-count">{{ merged_pr_count }}</span>
-      <span class="stat-label">Merged ({{ merged_window_hours }}h)</span>
+      <span class="stat-label">Merged ({{ merged_window_hours }}h){% if auto_merged_pr_count %}<br>{{ auto_merged_pr_count }} auto-merged{% endif %}</span>
     </div>
     <div class="stat stat-alerts{{ ' zero' if alert_count == 0 else '' }}">
       <span class="stat-count">{{ alert_count }}</span>
@@ -153,9 +154,9 @@
   <h3>🟢 Merged in the last {{ merged_window_hours }}h ({{ merged_prs|length }})</h3>
   {% for pr in merged_prs %}
   <div class="card merged">
-    <div><strong>{{ repo_link(pr.repo) }}</strong> <span class="meta">#{{ pr.number }}</span></div>
+    <div><strong>{{ repo_link(pr.repo) }}</strong> <span class="meta">#{{ pr.number }}</span>{% if pr.auto_merged %} <span class="badge automerge">auto-merged</span>{% endif %}</div>
     <div><a href="{{ pr.url }}">{{ pr.title }}</a></div>
-    <div class="meta">created by {{ identity(pr.author) }} · merged by {{ identity(pr.merged_by) }} · merged {{ pr.merged_at.strftime("%Y-%m-%d %H:%M UTC") }}</div>
+    <div class="meta">created by {{ identity(pr.author) }} · merged by {% if pr.auto_merged %}the Dependabot auto-merge workflow (as {{ identity(pr.merged_by) }}){% else %}{{ identity(pr.merged_by) }}{% endif %} · merged {{ pr.merged_at.strftime("%Y-%m-%d %H:%M UTC") }}</div>
   </div>
   {% endfor %}
   {% endif %}
