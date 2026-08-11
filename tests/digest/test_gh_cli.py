@@ -98,19 +98,27 @@ def test_list_merged_prs_since_requests_head_sha(mock_run: MagicMock) -> None:
 
 @patch("git_activity_monitor.digest.gh_cli.subprocess.run")
 def test_list_auto_merge_shas_collects_successful_runs(mock_run: MagicMock) -> None:
-    # --slurp wraps each page of results in an outer array.
-    pages = [
-        {"workflow_runs": [{"head_sha": "aaa"}, {"head_sha": "bbb"}]},
-        {"workflow_runs": [{"head_sha": "ccc"}]},
-    ]
-    mock_run.return_value = MagicMock(stdout=json.dumps(pages))
+    # --paginate concatenates one JSON object per page back-to-back.
+    page1 = json.dumps({"workflow_runs": [{"head_sha": "aaa"}, {"head_sha": "bbb"}]})
+    page2 = json.dumps({"workflow_runs": [{"head_sha": "ccc"}]})
+    mock_run.return_value = MagicMock(stdout=page1 + page2)
     since = dt.datetime(2026, 7, 27, 15, 0, tzinfo=dt.UTC)
     assert gh_cli.list_auto_merge_shas("jasmeralia/foo", since) == {"aaa", "bbb", "ccc"}
-    endpoint = mock_run.call_args[0][0][2]
+    args = mock_run.call_args[0][0]
+    endpoint = args[2]
     assert gh_cli.AUTO_MERGE_WORKFLOW in endpoint
     assert "status=success" in endpoint
     # 30-day lookback before the merge window, URL-encoded ">=".
     assert "created=%3E%3D2026-06-27" in endpoint
+    # gh 2.45 (gelfling's apt build) has no --slurp; pages are decoded here.
+    assert "--slurp" not in args
+
+
+@patch("git_activity_monitor.digest.gh_cli.subprocess.run")
+def test_list_auto_merge_shas_empty_output(mock_run: MagicMock) -> None:
+    mock_run.return_value = MagicMock(stdout="")
+    since = dt.datetime(2026, 7, 27, 15, 0, tzinfo=dt.UTC)
+    assert gh_cli.list_auto_merge_shas("jasmeralia/foo", since) == set()
 
 
 @patch("git_activity_monitor.digest.gh_cli.subprocess.run")

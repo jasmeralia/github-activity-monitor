@@ -30,6 +30,30 @@ def _run_json(args: list[str]) -> Any:
     return json.loads(result.stdout) if result.stdout.strip() else []
 
 
+def _decode_pages(stdout: str) -> list[Any]:
+    """Split `gh api --paginate` output into one decoded value per page.
+
+    --paginate concatenates each page's JSON back-to-back rather than merging
+    them, so this decodes them one at a time. gh's own `--slurp` would do this,
+    but it only exists from gh 2.53 onwards and gelfling runs the Ubuntu apt
+    build (2.45), so decode it here instead.
+    """
+    stdout = stdout.strip()
+    if not stdout:
+        return []
+    decoder = json.JSONDecoder()
+    pages: list[Any] = []
+    idx = 0
+    while idx < len(stdout):
+        while idx < len(stdout) and stdout[idx].isspace():
+            idx += 1
+        if idx >= len(stdout):
+            break
+        page, idx = decoder.raw_decode(stdout, idx)
+        pages.append(page)
+    return pages
+
+
 def get_authenticated_user() -> str:
     result = subprocess.run(
         ["gh", "api", "user", "-q", ".login"],
@@ -122,24 +146,26 @@ def list_auto_merge_shas(repo: str, since: dt.datetime) -> set[str]:
     """
     created_from = (since - dt.timedelta(days=_RUN_LOOKBACK_DAYS)).astimezone(dt.UTC).date()
     try:
-        payload = _run_json(
+        result = subprocess.run(
             [
+                "gh",
                 "api",
                 f"repos/{repo}/actions/workflows/{AUTO_MERGE_WORKFLOW}/runs"
                 f"?status=success&created=%3E%3D{created_from}&per_page=100",
                 "--paginate",
-                "--slurp",
-            ]
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
     except subprocess.CalledProcessError as exc:
         # No auto-merge workflow in this repo: every merge there is manual.
         if "404" in (exc.stderr or "") or "Not Found" in (exc.stderr or ""):
             return set()
         raise
-    pages = payload if isinstance(payload, list) else [payload]
     return {
         str(run["head_sha"])
-        for page in pages
+        for page in _decode_pages(result.stdout)
         for run in page.get("workflow_runs", [])
         if run.get("head_sha")
     }
@@ -168,20 +194,5 @@ def list_open_alerts(repo: str) -> list[dict[str, Any]]:
         if "disabled" in (exc.stderr or "").lower():
             raise AlertsDisabledError(repo) from exc
         raise
-    stdout = result.stdout.strip()
-    if not stdout:
-        return []
-    # --paginate concatenates one JSON array per page back-to-back, not a
-    # single combined array, so decode them one at a time.
-    decoder = json.JSONDecoder()
-    alerts: list[dict[str, Any]] = []
-    idx = 0
-    while idx < len(stdout):
-        while idx < len(stdout) and stdout[idx].isspace():
-            idx += 1
-        if idx >= len(stdout):
-            break
-        page, end = decoder.raw_decode(stdout, idx)
-        alerts.extend(page)
-        idx = end
-    return alerts
+    # Each page is its own JSON array, so flatten them into one list.
+    return [alert for page in _decode_pages(result.stdout) for alert in page]
