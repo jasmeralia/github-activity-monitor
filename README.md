@@ -239,7 +239,22 @@ Requires the [`gh` CLI](https://cli.github.com/) (authenticated) for data — no
 
 The email has a summary stat row up top (open PR / merged / open alert counts), followed by open PRs, recently merged PRs, and security alerts, each grouped by repo; Dependabot alerts are sorted by severity within a repo. Repos with Dependabot alerts disabled (dependency graph off, or alerts specifically disabled) are listed separately rather than silently showing zero alerts — unless excluded via `--alert-skip-repos` (comma/whitespace-separated `owner/repo` list, defaults to the `SKIP_REPOS` env var) for repos where alerts are intentionally left off by design and the "not enabled" callout would just be noise. Skipped repos are still scanned normally for open/merged PRs. **Sends nothing at all** on a day with zero merged PRs, zero open PRs, and zero open alerts.
 
+Merged PRs are additionally marked as **auto-merged** when the repo's Dependabot auto-merge workflow was what merged them, rather than a hand-clicked merge — see "Detecting Dependabot auto-merges" below.
+
 `--dry-run` prints the plain-text digest to stdout instead of sending mail (handy to check what's currently open, or which repos need Dependabot alerts enabled, without waiting for the next scheduled send). `--html-out PATH` additionally writes the rendered HTML body to a file, whether or not the email is actually sent.
+
+#### Detecting Dependabot auto-merges
+
+`.github/workflows/dependabot-auto-merge.yml` merges Dependabot PRs using a PAT belonging to the repo owner (a `GITHUB_TOKEN` merge would not trigger the release workflow). Because of that, GitHub records the owner as `mergedBy` on those PRs, making them indistinguishable from merges the owner performed by hand on that field alone.
+
+The digest resolves this by matching each merged PR's head SHA against the head SHAs of **successful** runs of that workflow in the same repo (`list_auto_merge_shas` in `gh_cli.py`, one extra API call per repo that had any merges). A match means the workflow is what merged the PR, which covers both ways it can do so:
+
+- **Queued auto-merge** — `gh pr merge --auto` enables auto-merge, and GitHub merges later once CI goes green. Leaves an `auto_squash_enabled` timeline event.
+- **Immediate merge** — when nothing is pending (no required status checks), the same command merges right away. Leaves *no* `auto_*_enabled` event at all, which is why the timeline event on its own is not a usable signal.
+
+A PR whose head SHA has no successful run is reported as a manual merge. That correctly covers PRs merged before the workflow existed, and PRs whose last push came from someone other than Dependabot — the workflow's `if: github.actor == 'dependabot[bot]'` guard skips those, so a human had to merge them.
+
+If the workflow is absent from a repo (404) or the lookup fails, every merge there is reported as manual; the annotation is best-effort and never blocks the rest of the digest.
 
 Implementation lives under `src/git_activity_monitor/digest/` (`gh_cli.py` for the `gh` subprocess calls, `collect.py` to aggregate across repos, `render.py`/`templates/digest_email.html` for the Jinja2-rendered email, `mailer.py` for Gmail SMTP delivery, `cli.py` for the entry point) — replaces the older `scripts/list-open-prs.sh` + `scripts/list-open-alerts.sh` + `scripts/gelfling-daily-digest.sh` trio of plain-text bash scripts with one Python codepath.
 

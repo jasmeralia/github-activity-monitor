@@ -158,3 +158,66 @@ def test_collect_digest_one_repo_failure_does_not_abort_others(
 
     assert data.open_pr_count == 1
     assert data.open_prs[0].repo == "jasmeralia/ok"
+
+
+@patch("git_activity_monitor.digest.collect.gh_cli.list_auto_merge_shas")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_alerts")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_merged_prs_since")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_prs")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_repos")
+def test_collect_digest_flags_auto_merged_prs(
+    mock_list_repos, mock_open_prs, mock_merged_prs, mock_alerts, mock_auto_shas
+) -> None:
+    mock_list_repos.return_value = ["jasmeralia/a"]
+    mock_open_prs.return_value = []
+    mock_alerts.return_value = []
+    auto = _merged_pr(1, "2026-07-28T10:00:00Z") | {"headRefOid": "sha-auto"}
+    manual = _merged_pr(2, "2026-07-28T11:00:00Z") | {"headRefOid": "sha-manual"}
+    mock_merged_prs.return_value = [auto, manual]
+    mock_auto_shas.return_value = {"sha-auto"}
+
+    data = collect_digest("jasmeralia", now=NOW)
+
+    by_number = {pr.number: pr for pr in data.merged_prs}
+    assert by_number[1].auto_merged is True
+    assert by_number[2].auto_merged is False
+    assert data.auto_merged_pr_count == 1
+
+
+@patch("git_activity_monitor.digest.collect.gh_cli.list_auto_merge_shas")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_alerts")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_merged_prs_since")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_prs")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_repos")
+def test_collect_digest_skips_auto_merge_lookup_without_merges(
+    mock_list_repos, mock_open_prs, mock_merged_prs, mock_alerts, mock_auto_shas
+) -> None:
+    mock_list_repos.return_value = ["jasmeralia/a"]
+    mock_open_prs.return_value = []
+    mock_merged_prs.return_value = []
+    mock_alerts.return_value = []
+
+    collect_digest("jasmeralia", now=NOW)
+
+    mock_auto_shas.assert_not_called()
+
+
+@patch("git_activity_monitor.digest.collect.gh_cli.list_auto_merge_shas")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_alerts")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_merged_prs_since")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_open_prs")
+@patch("git_activity_monitor.digest.collect.gh_cli.list_repos")
+def test_collect_digest_keeps_merged_prs_when_auto_merge_lookup_fails(
+    mock_list_repos, mock_open_prs, mock_merged_prs, mock_alerts, mock_auto_shas
+) -> None:
+    mock_list_repos.return_value = ["jasmeralia/a"]
+    mock_open_prs.return_value = []
+    mock_alerts.return_value = []
+    mock_merged_prs.return_value = [_merged_pr(1, "2026-07-28T10:00:00Z") | {"headRefOid": "sha"}]
+    mock_auto_shas.side_effect = RuntimeError("gh exploded")
+
+    data = collect_digest("jasmeralia", now=NOW)
+
+    # The PR still shows up; it just falls back to being reported as manual.
+    assert len(data.merged_prs) == 1
+    assert data.merged_prs[0].auto_merged is False

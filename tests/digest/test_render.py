@@ -148,3 +148,53 @@ def test_build_text_includes_all_sections() -> None:
     assert text.index("=== Open Pull Requests ===") < text.index("=== Merged in the last 24h ===")
     assert "Dependabot alerts not enabled" in text
     assert "jasmeralia/no-graph" in text
+
+
+def _merged(auto_merged: bool) -> MergedPR:
+    return MergedPR(
+        repo="jasmeralia/wishlist-monitor",
+        number=42,
+        title="Bump the python-dependencies group",
+        author="app/dependabot",
+        merged_by="jasmeralia",
+        url="https://gh/pr/42",
+        merged_at=NOW - dt.timedelta(hours=1),
+        auto_merged=auto_merged,
+    )
+
+
+def test_build_html_marks_auto_merged_prs() -> None:
+    data = _empty_data()
+    data.merged_prs = [_merged(auto_merged=True)]
+    html = build_html(data)
+    assert 'class="badge automerge"' in html
+    assert "Dependabot auto-merge workflow" in html
+    assert "1 auto-merged" in html
+
+
+def test_build_html_leaves_manual_merges_unmarked() -> None:
+    data = _empty_data()
+    data.merged_prs = [_merged(auto_merged=False)]
+    html = build_html(data)
+    # The `.badge.automerge` CSS rule is always in the <style> block, so this
+    # has to assert on the badge markup rather than the bare class name.
+    assert 'class="badge automerge"' not in html
+    assert "auto-merged" not in html
+    assert "Dependabot auto-merge workflow" not in html
+    assert "merged by jasmeralia" in html
+
+
+def test_build_text_annotates_auto_merged_prs() -> None:
+    data = _empty_data()
+    data.merged_prs = [_merged(auto_merged=True)]
+    text = build_text(data)
+    assert "merged by jasmeralia (auto-merge workflow)" in text
+    assert "(1 auto-merged)" in text
+
+
+def test_build_text_leaves_manual_merges_unmarked() -> None:
+    data = _empty_data()
+    data.merged_prs = [_merged(auto_merged=False)]
+    text = build_text(data)
+    assert "merged by jasmeralia:" in text
+    assert "auto-merge" not in text
