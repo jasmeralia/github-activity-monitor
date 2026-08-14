@@ -31,6 +31,13 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+
       - name: Shellcheck
         run: make shellcheck
 
