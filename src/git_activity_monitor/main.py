@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import logging
 import signal
@@ -188,8 +189,21 @@ def _run_cycle(  # pylint: disable=too-many-arguments,too-many-positional-argume
         )
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="git-activity-monitor")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single monitoring cycle and exit instead of polling forever "
+        "(same as setting RUN_ONCE=1).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     settings = Settings()
+    run_once = args.once or settings.run_once
     logging.basicConfig(
         level=settings.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -232,8 +246,8 @@ def main() -> None:
         releases_ctx as releases_discord_client,
         alerts_ctx as alerts_discord_client,
     ):
-        while not shutdown:
-            cycle_start = time.monotonic()
+        if run_once:
+            logger.info("RUN_ONCE set; running a single cycle and exiting")
             _run_cycle(
                 settings,
                 state_store,
@@ -243,13 +257,25 @@ def main() -> None:
                 releases_discord_client=releases_discord_client,
                 alerts_discord_client=alerts_discord_client,
             )
-            elapsed = time.monotonic() - cycle_start
-            sleep_for = int(max(0.0, settings.poll_interval_seconds - elapsed))
-            logger.debug("Cycle complete in %.1fs; sleeping %ds", elapsed, sleep_for)
-            for _ in range(sleep_for):
-                if shutdown:
-                    break
-                time.sleep(1)
+        else:
+            while not shutdown:
+                cycle_start = time.monotonic()
+                _run_cycle(
+                    settings,
+                    state_store,
+                    gh_client,
+                    discord_client,
+                    monitor_fns,
+                    releases_discord_client=releases_discord_client,
+                    alerts_discord_client=alerts_discord_client,
+                )
+                elapsed = time.monotonic() - cycle_start
+                sleep_for = int(max(0.0, settings.poll_interval_seconds - elapsed))
+                logger.debug("Cycle complete in %.1fs; sleeping %ds", elapsed, sleep_for)
+                for _ in range(sleep_for):
+                    if shutdown:
+                        break
+                    time.sleep(1)
 
     logger.info("Shutdown complete")
 

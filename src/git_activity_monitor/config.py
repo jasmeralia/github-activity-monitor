@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     discord_security_webhook_url: str | None = None
 
     poll_interval_seconds: int = 300
+    run_once: bool = False
     owners: list[str] = []
     repositories: list[str] = []
     ghcr_packages: list[str] = []

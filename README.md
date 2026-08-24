@@ -74,10 +74,19 @@ cp .env.example .env
 | `DISCORD_SECURITY_WEBHOOK_URL` | no | — | Second webhook for Dependabot security alerts; falls back to `DISCORD_WEBHOOK_URL` if unset |
 | `ENABLED_EVENTS` | no | all | Comma-separated subset of: `stars,watches,prs,issues,releases,ghcr,alerts` |
 | `POLL_INTERVAL_SECONDS` | no | `300` | How often to poll (seconds; minimum 30) |
+| `RUN_ONCE` | no | `false` | Run a single monitoring cycle and exit instead of polling forever (same as the `--once` CLI flag) |
 | `STATE_FILE_PATH` | no | `/data/state.json` | Path to the persistence file |
 | `LOG_LEVEL` | no | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 At least one of `OWNERS` or `REPOSITORIES` must be set. Both can be used together — repos are deduplicated.
+
+By default the service runs as a long-lived daemon, polling every `POLL_INTERVAL_SECONDS`. Pass `--once` (or set `RUN_ONCE=1`) to run a single monitoring cycle covering all enabled monitor types and exit — useful when the service is invoked from an external scheduler (e.g. cron) instead of running as a persistent process:
+
+```bash
+git-activity-monitor --once
+# or
+RUN_ONCE=1 git-activity-monitor
+```
 
 ---
 
