@@ -140,6 +140,30 @@ def test_invalid_ghcr_package_format_raises() -> None:
         _make(ghcr_packages=["notapackage"])
 
 
+def test_run_once_default_false() -> None:
+    s = _make()
+    assert s.run_once is False
+
+
+def test_run_once_from_env(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GITHUB_TOKEN=tok",
+                "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1/t",
+                "REPOSITORIES=owner/repo",
+                "RUN_ONCE=1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    s = Settings(_env_file=env_file)  # type: ignore[call-arg]
+
+    assert s.run_once is True
+
+
 def test_pinned_message_id_optional() -> None:
     s = _make(discord_pinned_message_id="12345")
     assert s.discord_pinned_message_id == "12345"
