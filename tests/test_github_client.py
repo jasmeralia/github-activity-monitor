@@ -432,9 +432,7 @@ def test_list_open_pull_requests(gh: GitHubClient) -> None:
 
 @respx.mock
 def test_list_open_pull_requests_uses_state_open(gh: GitHubClient) -> None:
-    route = respx.get(f"{_API}/repos/owner/repo/pulls").mock(
-        side_effect=_paginated([])
-    )
+    route = respx.get(f"{_API}/repos/owner/repo/pulls").mock(side_effect=_paginated([]))
     gh.list_open_pull_requests("owner", "repo")
     assert route.calls.last.request.url.params["state"] == "open"
 
@@ -466,8 +464,14 @@ def test_list_merged_pull_requests_since_filters_by_merged_at(gh: GitHubClient) 
             httpx.Response(200, json=[]),
         ]
     )
+    # The list endpoint doesn't return merged_by -- only the single-PR
+    # endpoint does, so a matched PR triggers this follow-up call.
+    respx.get(f"{_API}/repos/owner/repo/pulls/1").mock(
+        return_value=httpx.Response(200, json={"number": 1, "merged_by": {"login": "carol"}})
+    )
     prs = gh.list_merged_pull_requests_since("owner", "repo", since)
     assert [p["number"] for p in prs] == [1]
+    assert prs[0]["merged_by"]["login"] == "carol"
 
 
 @respx.mock
@@ -499,9 +503,21 @@ def test_list_merged_pull_requests_since_stops_paginating_once_stale(gh: GitHubC
             ),
         ]
     )
+    respx.get(f"{_API}/repos/owner/repo/pulls/1").mock(
+        return_value=httpx.Response(200, json={"number": 1})
+    )
     prs = gh.list_merged_pull_requests_since("owner", "repo", since)
     assert [p["number"] for p in prs] == [1]
     assert route.call_count == 2
+
+
+@respx.mock
+def test_get_pull_request(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/pulls/5").mock(
+        return_value=httpx.Response(200, json={"number": 5, "merged_by": {"login": "carol"}})
+    )
+    pr = gh.get_pull_request("owner", "repo", 5)
+    assert pr["merged_by"]["login"] == "carol"
 
 
 @respx.mock

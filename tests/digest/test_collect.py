@@ -55,9 +55,7 @@ def test_collect_digest_aggregates_across_repos(
     mock_list_repos, mock_open_prs, mock_merged_prs, mock_alerts
 ) -> None:
     mock_list_repos.return_value = ["jasmeralia/a", "jasmeralia/b"]
-    mock_open_prs.side_effect = lambda client, repo: (
-        [_open_pr(1)] if repo == "jasmeralia/a" else []
-    )
+    mock_open_prs.side_effect = lambda client, repo: [_open_pr(1)] if repo == "jasmeralia/a" else []
     mock_merged_prs.side_effect = lambda client, repo, since: (
         [_merged_pr(2, "2026-07-28T10:00:00Z")] if repo == "jasmeralia/b" else []
     )
