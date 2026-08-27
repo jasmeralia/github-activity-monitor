@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import httpx
 import pytest
 import respx
 
-from git_activity_monitor.github_client import GitHubClient
+from git_activity_monitor.github_client import AlertsDisabledError, GitHubClient
 
 _API = "https://api.github.com"
 
@@ -411,3 +413,157 @@ def test_get_dependabot_alerts_page_param_rejected_is_not_used(gh: GitHubClient)
     )
     gh.get_dependabot_alerts("owner", "repo")
     assert "page" not in route.calls.last.request.url.params
+
+
+@respx.mock
+def test_get_authenticated_user(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/user").mock(return_value=httpx.Response(200, json={"login": "jasmeralia"}))
+    assert gh.get_authenticated_user() == "jasmeralia"
+
+
+@respx.mock
+def test_list_open_pull_requests(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/pulls").mock(
+        side_effect=_paginated([{"number": 1, "title": "A"}])
+    )
+    prs = gh.list_open_pull_requests("owner", "repo")
+    assert [p["number"] for p in prs] == [1]
+
+
+@respx.mock
+def test_list_open_pull_requests_uses_state_open(gh: GitHubClient) -> None:
+    route = respx.get(f"{_API}/repos/owner/repo/pulls").mock(
+        side_effect=_paginated([])
+    )
+    gh.list_open_pull_requests("owner", "repo")
+    assert route.calls.last.request.url.params["state"] == "open"
+
+
+@respx.mock
+def test_list_merged_pull_requests_since_filters_by_merged_at(gh: GitHubClient) -> None:
+    since = dt.datetime(2026, 7, 27, tzinfo=dt.UTC)
+    # Second page is empty -- both fixture items are still in-window by
+    # updated_at, so this is what actually ends pagination, not the
+    # early-exit tested separately below.
+    respx.get(f"{_API}/repos/owner/repo/pulls").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 1,
+                        "updated_at": "2026-07-28T00:00:00Z",
+                        "merged_at": "2026-07-28T00:00:00Z",
+                    },
+                    {
+                        # Updated in-window but never merged -- not a merge event.
+                        "number": 2,
+                        "updated_at": "2026-07-27T12:00:00Z",
+                        "merged_at": None,
+                    },
+                ],
+            ),
+            httpx.Response(200, json=[]),
+        ]
+    )
+    prs = gh.list_merged_pull_requests_since("owner", "repo", since)
+    assert [p["number"] for p in prs] == [1]
+
+
+@respx.mock
+def test_list_merged_pull_requests_since_stops_paginating_once_stale(gh: GitHubClient) -> None:
+    since = dt.datetime(2026, 7, 27, tzinfo=dt.UTC)
+    route = respx.get(f"{_API}/repos/owner/repo/pulls").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 1,
+                        "updated_at": "2026-07-28T00:00:00Z",
+                        "merged_at": "2026-07-28T00:00:00Z",
+                    }
+                ],
+            ),
+            httpx.Response(
+                200,
+                json=[
+                    {
+                        # Older than `since` -- triggers the early-exit; page 3
+                        # (if requested) would be a test failure below.
+                        "number": 2,
+                        "updated_at": "2026-07-26T00:00:00Z",
+                        "merged_at": "2026-07-26T00:00:00Z",
+                    }
+                ],
+            ),
+        ]
+    )
+    prs = gh.list_merged_pull_requests_since("owner", "repo", since)
+    assert [p["number"] for p in prs] == [1]
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_list_workflow_run_head_shas_collects_across_pages(gh: GitHubClient) -> None:
+    route = respx.get(f"{_API}/repos/owner/repo/actions/workflows/wf.yml/runs").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"workflow_runs": [{"head_sha": "aaa"}, {"head_sha": "bbb"}]},
+            ),
+            httpx.Response(200, json={"workflow_runs": [{"head_sha": "ccc"}]}),
+            httpx.Response(200, json={"workflow_runs": []}),
+        ]
+    )
+    shas = gh.list_workflow_run_head_shas("owner", "repo", "wf.yml", dt.date(2026, 6, 27))
+    assert shas == {"aaa", "bbb", "ccc"}
+    assert route.call_count == 3
+    first_params = route.calls[0].request.url.params
+    assert first_params["status"] == "success"
+    assert first_params["created"] == ">=2026-06-27"
+
+
+@respx.mock
+def test_list_workflow_run_head_shas_returns_empty_when_workflow_absent(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/actions/workflows/wf.yml/runs").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+    assert gh.list_workflow_run_head_shas("owner", "repo", "wf.yml", dt.date(2026, 6, 27)) == set()
+
+
+@respx.mock
+def test_list_workflow_run_head_shas_reraises_other_errors(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/actions/workflows/wf.yml/runs").mock(
+        return_value=httpx.Response(500, json={"message": "boom"})
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        gh.list_workflow_run_head_shas("owner", "repo", "wf.yml", dt.date(2026, 6, 27))
+
+
+@respx.mock
+def test_list_open_dependabot_alerts_uses_state_open(gh: GitHubClient) -> None:
+    route = respx.get(f"{_API}/repos/owner/repo/dependabot/alerts").mock(
+        return_value=httpx.Response(200, json=[{"number": 1}])
+    )
+    alerts = gh.list_open_dependabot_alerts("owner", "repo")
+    assert [a["number"] for a in alerts] == [1]
+    assert route.calls.last.request.url.params["state"] == "open"
+
+
+@respx.mock
+def test_list_open_dependabot_alerts_disabled_raises(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/dependabot/alerts").mock(
+        return_value=httpx.Response(403, json={"message": "Dependabot alerts are disabled"})
+    )
+    with pytest.raises(AlertsDisabledError):
+        gh.list_open_dependabot_alerts("owner", "repo")
+
+
+@respx.mock
+def test_list_open_dependabot_alerts_other_error_propagates(gh: GitHubClient) -> None:
+    respx.get(f"{_API}/repos/owner/repo/dependabot/alerts").mock(
+        return_value=httpx.Response(500, json={"message": "boom"})
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        gh.list_open_dependabot_alerts("owner", "repo")

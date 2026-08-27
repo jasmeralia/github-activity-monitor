@@ -7,8 +7,9 @@ import datetime as dt
 import logging
 from typing import Any
 
-from git_activity_monitor.digest import gh_cli
+from git_activity_monitor.digest import github_source
 from git_activity_monitor.digest.models import Alert, DigestData, MergedPR, OpenPR
+from git_activity_monitor.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +23,21 @@ def _advisory_id(raw: dict[str, Any]) -> str:
     return str(advisory.get("ghsa_id") or advisory.get("cve_id") or "")
 
 
-def _auto_merge_shas(repo: str, since: dt.datetime) -> frozenset[str]:
+def _auto_merge_shas(client: GitHubClient, repo: str, since: dt.datetime) -> frozenset[str]:
     """Auto-merge-workflow head SHAs for `repo`, or empty if they can't be read.
 
     A failure here only costs the auto-merge annotation, so it must never take
     the whole repo's merged-PR section down with it.
     """
     try:
-        return frozenset(gh_cli.list_auto_merge_shas(repo, since))
+        return frozenset(github_source.list_auto_merge_shas(client, repo, since))
     except Exception:  # pylint: disable=broad-exception-caught
         logger.exception("Failed to list auto-merge runs for %s; assuming manual merges", repo)
         return frozenset()
 
 
 def collect_digest(
+    client: GitHubClient,
     owner: str,
     now: dt.datetime | None = None,
     merged_window_hours: int = 24,
@@ -44,7 +46,7 @@ def collect_digest(
     now = now or dt.datetime.now(dt.UTC)
     since = now - dt.timedelta(hours=merged_window_hours)
 
-    repos = gh_cli.list_repos(owner)
+    repos = github_source.list_repos(client, owner)
     data = DigestData(
         owner=owner,
         generated_at=now,
@@ -54,7 +56,7 @@ def collect_digest(
 
     for repo in repos:
         try:
-            for raw in gh_cli.list_open_prs(repo):
+            for raw in github_source.list_open_prs(client, repo):
                 assignees = [a["login"] for a in raw.get("assignees", [])]
                 data.open_prs.append(
                     OpenPR(
@@ -71,9 +73,9 @@ def collect_digest(
             logger.exception("Failed to list open PRs for %s; skipping", repo)
 
         try:
-            merged = gh_cli.list_merged_prs_since(repo, since)
+            merged = github_source.list_merged_prs_since(client, repo, since)
             # Only worth a second API call if something actually merged.
-            auto_merge_shas = _auto_merge_shas(repo, since) if merged else frozenset()
+            auto_merge_shas = _auto_merge_shas(client, repo, since) if merged else frozenset()
             for raw in merged:
                 data.merged_prs.append(
                     MergedPR(
@@ -93,7 +95,7 @@ def collect_digest(
 
         if repo not in alert_skip_repos:
             try:
-                for raw in gh_cli.list_open_alerts(repo):
+                for raw in github_source.list_open_alerts(client, repo):
                     dependency = raw.get("dependency", {}).get("package", {})
                     data.alerts.append(
                         Alert(
@@ -108,7 +110,7 @@ def collect_digest(
                             created_at=raw["created_at"][:10],
                         )
                     )
-            except gh_cli.AlertsDisabledError:
+            except github_source.AlertsDisabledError:
                 data.alerts_disabled_repos.append(repo)
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.exception("Failed to list Dependabot alerts for %s; skipping", repo)

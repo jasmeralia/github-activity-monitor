@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import datetime as dt
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
+
+import pytest
 
 from git_activity_monitor.digest.cli import main
 from git_activity_monitor.digest.models import DigestData, OpenPR
 
 NOW = dt.datetime(2026, 7, 28, 15, 0, tzinfo=dt.UTC)
+
+
+@pytest.fixture(autouse=True)
+def _github_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
 
 
 @patch("git_activity_monitor.digest.cli.mailer.send_digest_email")
@@ -91,7 +98,7 @@ def test_main_writes_html_out_even_when_empty(
     mock_send.assert_not_called()
 
 
-@patch("git_activity_monitor.digest.cli.gh_cli.get_authenticated_user")
+@patch("git_activity_monitor.digest.cli.github_source.get_authenticated_user")
 @patch("git_activity_monitor.digest.cli.mailer.send_digest_email")
 @patch("git_activity_monitor.digest.cli.collect_digest")
 def test_main_defaults_owner_to_authenticated_user(
@@ -102,9 +109,10 @@ def test_main_defaults_owner_to_authenticated_user(
 
     main([])
 
-    mock_get_user.assert_called_once()
+    mock_get_user.assert_called_once_with(ANY)
     mock_collect.assert_called_once()
-    assert mock_collect.call_args[0][0] == "jasmeralia"
+    # First positional arg is the GitHubClient, second is the owner.
+    assert mock_collect.call_args[0][1] == "jasmeralia"
 
 
 @patch("git_activity_monitor.digest.cli.mailer.send_digest_email")
@@ -132,3 +140,16 @@ def test_main_alert_skip_repos_defaults_to_skip_repos_env_var(
     assert mock_collect.call_args.kwargs["alert_skip_repos"] == frozenset(
         {"jasmeralia/skipped"}
     )
+
+
+@patch("git_activity_monitor.digest.cli.mailer.send_digest_email")
+@patch("git_activity_monitor.digest.cli.collect_digest")
+def test_main_requires_github_token(
+    mock_collect: MagicMock, mock_send: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit):
+        main(["jasmeralia"])
+
+    mock_collect.assert_not_called()
