@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from collections.abc import Iterator
 from typing import Any
@@ -16,6 +17,10 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 _RATE_LIMIT_WARN_THRESHOLD = 50
+
+
+class AlertsDisabledError(Exception):
+    """Dependabot alerts (or the dependency graph) aren't enabled for a repo."""
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -172,6 +177,106 @@ class GitHubClient:
             if exc.response.status_code == 403:
                 return []
             raise
+
+    def list_open_dependabot_alerts(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        """Return open Dependabot alerts for a repo.
+
+        Unlike get_dependabot_alerts (which treats a disabled dependency graph
+        as "no alerts", used by the Discord monitor), this raises
+        AlertsDisabledError so callers that need to report "disabled" as its
+        own state -- distinct from "zero alerts" -- can do so.
+        """
+        try:
+            return list(
+                self._paginate_by_link(
+                    f"/repos/{owner}/{repo}/dependabot/alerts", params={"state": "open"}
+                )
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403:
+                raise AlertsDisabledError(f"{owner}/{repo}") from exc
+            raise
+
+    def get_authenticated_user(self) -> str:
+        return str(self._get("/user")["login"])
+
+    def list_open_pull_requests(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        """Raw open-PR dicts (REST /pulls shape: user, created_at, html_url, ...)."""
+        return list(
+            self._paginate(f"/repos/{owner}/{repo}/pulls", params={"state": "open"})
+        )
+
+    def list_merged_pull_requests_since(
+        self, owner: str, repo: str, since: dt.datetime
+    ) -> list[dict[str, Any]]:
+        """Raw merged-PR dicts merged at or after `since` (UTC).
+
+        Paginates closed PRs sorted by most-recently-updated first, so a
+        merge (which always bumps updated_at) merged at/after `since` is
+        guaranteed to appear before we hit a page that's entirely older --
+        that's the early-exit condition below.
+        """
+        results: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            items: list[dict[str, Any]] = self._get(
+                f"/repos/{owner}/{repo}/pulls",
+                params={
+                    "state": "closed",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": 100,
+                    "page": page,
+                },
+            )
+            if not items:
+                break
+            stop = False
+            for item in items:
+                updated_at = dt.datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
+                if updated_at < since:
+                    stop = True
+                    break
+                merged_at = item.get("merged_at")
+                if merged_at and dt.datetime.fromisoformat(
+                    merged_at.replace("Z", "+00:00")
+                ) >= since:
+                    results.append(item)
+            if stop:
+                break
+            page += 1
+        return results
+
+    def list_workflow_run_head_shas(
+        self, owner: str, repo: str, workflow_file: str, created_since: dt.date
+    ) -> set[str]:
+        """Head SHAs of successful runs of `workflow_file` created at/after `created_since`.
+
+        Returns an empty set if the repo has no such workflow (404).
+        """
+        shas: set[str] = set()
+        page = 1
+        while True:
+            try:
+                data = self._get(
+                    f"/repos/{owner}/{repo}/actions/workflows/{workflow_file}/runs",
+                    params={
+                        "status": "success",
+                        "created": f">={created_since.isoformat()}",
+                        "per_page": 100,
+                        "page": page,
+                    },
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    return set()
+                raise
+            runs = data.get("workflow_runs", [])
+            if not runs:
+                break
+            shas.update(run["head_sha"] for run in runs if run.get("head_sha"))
+            page += 1
+        return shas
 
     def get_owner_repos(self, owner: str) -> list[str]:
         """Return 'owner/repo' strings for all non-fork, non-archived repos under owner.

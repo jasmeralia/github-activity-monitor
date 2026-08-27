@@ -14,8 +14,9 @@ import os
 import re
 from pathlib import Path
 
-from git_activity_monitor.digest import gh_cli, mailer, render
+from git_activity_monitor.digest import github_source, mailer, render
 from git_activity_monitor.digest.collect import collect_digest
+from git_activity_monitor.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -74,42 +75,48 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     args = parse_args(argv)
 
-    owner = args.owner or gh_cli.get_authenticated_user()
-    data = collect_digest(
-        owner,
-        merged_window_hours=args.merged_window_hours,
-        alert_skip_repos=_parse_repo_list(args.alert_skip_repos),
-    )
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise SystemExit("GITHUB_TOKEN is required (git-activity-monitor's own .env has one)")
 
-    if args.html_out is not None:
-        args.html_out.write_text(render.build_html(data), encoding="utf-8")
-        logger.info("Wrote rendered HTML to %s", args.html_out)
+    with GitHubClient(token) as client:
+        owner = args.owner or github_source.get_authenticated_user(client)
+        data = collect_digest(
+            client,
+            owner,
+            merged_window_hours=args.merged_window_hours,
+            alert_skip_repos=_parse_repo_list(args.alert_skip_repos),
+        )
 
-    if data.is_empty():
+        if args.html_out is not None:
+            args.html_out.write_text(render.build_html(data), encoding="utf-8")
+            logger.info("Wrote rendered HTML to %s", args.html_out)
+
+        if data.is_empty():
+            print(
+                f"No open PRs, no PRs merged in the last {args.merged_window_hours}h, "
+                "and no open alerts -- skipping email."
+            )
+            return 0
+
+        subject = f"[{owner}] Git Activity Digest - {data.generated_at.strftime('%Y-%m-%d')}"
+
+        if args.dry_run:
+            print(render.build_text(data))
+            return 0
+
+        mailer.send_digest_email(
+            subject=subject,
+            html_body=render.build_html(data),
+            text_body=render.build_text(data),
+            recipient=args.recipient,
+        )
         print(
-            f"No open PRs, no PRs merged in the last {args.merged_window_hours}h, "
-            "and no open alerts -- skipping email."
+            f"Sent digest: {data.open_pr_count} open PR(s), "
+            f"{data.merged_pr_count} merged PR(s) in the last {args.merged_window_hours}h, "
+            f"{data.alert_count} open alert(s)."
         )
         return 0
-
-    subject = f"[{owner}] Git Activity Digest - {data.generated_at.strftime('%Y-%m-%d')}"
-
-    if args.dry_run:
-        print(render.build_text(data))
-        return 0
-
-    mailer.send_digest_email(
-        subject=subject,
-        html_body=render.build_html(data),
-        text_body=render.build_text(data),
-        recipient=args.recipient,
-    )
-    print(
-        f"Sent digest: {data.open_pr_count} open PR(s), "
-        f"{data.merged_pr_count} merged PR(s) in the last {args.merged_window_hours}h, "
-        f"{data.alert_count} open alert(s)."
-    )
-    return 0
 
 
 if __name__ == "__main__":
