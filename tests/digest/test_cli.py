@@ -137,9 +137,7 @@ def test_main_alert_skip_repos_defaults_to_skip_repos_env_var(
 
     main(["jasmeralia"])
 
-    assert mock_collect.call_args.kwargs["alert_skip_repos"] == frozenset(
-        {"jasmeralia/skipped"}
-    )
+    assert mock_collect.call_args.kwargs["alert_skip_repos"] == frozenset({"jasmeralia/skipped"})
 
 
 @patch("git_activity_monitor.digest.cli.mailer.send_digest_email")

@@ -202,9 +202,7 @@ class GitHubClient:
 
     def list_open_pull_requests(self, owner: str, repo: str) -> list[dict[str, Any]]:
         """Raw open-PR dicts (REST /pulls shape: user, created_at, html_url, ...)."""
-        return list(
-            self._paginate(f"/repos/{owner}/{repo}/pulls", params={"state": "open"})
-        )
+        return list(self._paginate(f"/repos/{owner}/{repo}/pulls", params={"state": "open"}))
 
     def list_merged_pull_requests_since(
         self, owner: str, repo: str, since: dt.datetime
@@ -238,14 +236,22 @@ class GitHubClient:
                     stop = True
                     break
                 merged_at = item.get("merged_at")
-                if merged_at and dt.datetime.fromisoformat(
-                    merged_at.replace("Z", "+00:00")
-                ) >= since:
+                if (
+                    merged_at
+                    and dt.datetime.fromisoformat(merged_at.replace("Z", "+00:00")) >= since
+                ):
                     results.append(item)
             if stop:
                 break
             page += 1
-        return results
+        # The list endpoint above doesn't include merged_by (only the
+        # single-PR endpoint does) -- one extra call per matched PR to fill
+        # it in. Only reached for PRs that already passed the merge-window
+        # filter, so this is bounded by actual daily merge volume, not repo size.
+        return [self.get_pull_request(owner, repo, item["number"]) for item in results]
+
+    def get_pull_request(self, owner: str, repo: str, number: int) -> dict[str, Any]:
+        return dict(self._get(f"/repos/{owner}/{repo}/pulls/{number}"))
 
     def list_workflow_run_head_shas(
         self, owner: str, repo: str, workflow_file: str, created_since: dt.date
