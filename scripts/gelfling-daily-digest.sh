@@ -15,9 +15,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# truenas-typhoon has no real external dependencies to scan (its only compose
-# files are an example and inert backups, see jasmeralia/truenas-typhoon#6) --
-# Dependabot alerts stay disabled by design, so don't flag it in the digest.
-export SKIP_REPOS="${SKIP_REPOS:-jasmeralia/truenas-typhoon}"
-
 exec "$REPO_ROOT/.venv/bin/git-activity-digest" "$@"

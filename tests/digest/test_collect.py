@@ -118,10 +118,10 @@ def test_collect_digest_tracks_disabled_alert_repos(
 def test_collect_digest_alert_skip_repos_excludes_entirely(
     mock_list_repos, mock_open_prs, mock_merged_prs, mock_alerts
 ) -> None:
-    # truenas-typhoon-style case: alerts are disabled by design, so skipping
-    # it entirely should mean it never shows up as "disabled" noise either,
-    # while still being scanned normally for open/merged PRs.
-    mock_list_repos.return_value = ["jasmeralia/truenas-typhoon", "jasmeralia/ok"]
+    # A repo with alerts disabled by design: skipping it entirely should mean
+    # it never shows up as "disabled" noise either, while still being
+    # scanned normally for open/merged PRs.
+    mock_list_repos.return_value = ["jasmeralia/skipped", "jasmeralia/ok"]
     mock_open_prs.return_value = [_open_pr(1)]
     mock_merged_prs.return_value = []
     # list_open_alerts must never be called for the skipped repo at all --
@@ -129,7 +129,7 @@ def test_collect_digest_alert_skip_repos_excludes_entirely(
     mock_alerts.return_value = []
 
     data = collect_digest(
-        "jasmeralia", now=NOW, alert_skip_repos=frozenset({"jasmeralia/truenas-typhoon"})
+        "jasmeralia", now=NOW, alert_skip_repos=frozenset({"jasmeralia/skipped"})
     )
 
     assert data.alerts_disabled_repos == []

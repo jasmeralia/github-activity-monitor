@@ -124,11 +124,11 @@ def test_main_alert_skip_repos_flag(mock_collect: MagicMock, mock_send: MagicMoc
 def test_main_alert_skip_repos_defaults_to_skip_repos_env_var(
     mock_collect: MagicMock, mock_send: MagicMock, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SKIP_REPOS", "jasmeralia/truenas-typhoon")
+    monkeypatch.setenv("SKIP_REPOS", "jasmeralia/skipped")
     mock_collect.return_value = DigestData(owner="jasmeralia", generated_at=NOW, repos_checked=3)
 
     main(["jasmeralia"])
 
     assert mock_collect.call_args.kwargs["alert_skip_repos"] == frozenset(
-        {"jasmeralia/truenas-typhoon"}
+        {"jasmeralia/skipped"}
     )
