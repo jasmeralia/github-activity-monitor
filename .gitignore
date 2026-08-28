@@ -14,3 +14,4 @@ build/
 data/
 # Dev symlink created by 'make setup' so mypy/pylint can find the package
 github_activity_monitor
+.kanna
